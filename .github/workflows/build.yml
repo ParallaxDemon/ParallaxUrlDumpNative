@@ -1,4 +1,4 @@
-name: build liburldump.so
+name: build native suite + liburldump.so
 
 on:
   push:
@@ -11,7 +11,39 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  host-suite:
+    name: Host C++ suite (CMake + ctest)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build zlib1g-dev libcapstone-dev
+
+      - name: Configure
+        run: cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build CLI and tests
+        run: cmake --build build-host -j2
+
+      - name: Run native tests
+        run: ctest --test-dir build-host --output-on-failure
+
+      - name: CLI smoke test
+        run: ./build-host/parallax_dump --help
+
+      - name: Upload host binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-dump-host
+          path: build-host/parallax_dump
+
+  android-ndk:
+    name: Android liburldump.so (4 ABIs)
     runs-on: ubuntu-latest
 
     steps:

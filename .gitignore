@@ -4,6 +4,10 @@ app/src/main/libs/
 artifacts/
 *.zip
 
+# host CMake build
+build-host/
+build/
+
 # Editor / OS
 .DS_Store
 *.swp

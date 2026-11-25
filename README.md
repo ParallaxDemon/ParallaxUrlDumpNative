@@ -1,6 +1,90 @@
 # ParallaxUrlDumpNative — ULTRA
 
-**Pure-native, passive Android URL dumper jo har URL ke saath uska memory ADDRESS aur OFFSET bhi dikhta hai. No hooks, no interception, no traffic modification, no Java dependency.**
+**Pure-native C/C++ URL intelligence: har finding ke saath source, byte offset, ELF address space aur (jahan available ho) runtime address. No hooks, no interception, no traffic modification, no Java/Kotlin/Python business logic.**
+
+Is repo me do layers hain:
+
+1. **`liburldump.so`** — on-device, passive runtime dumper. URLs ke saath absolute address, mapping offsets, module base aur ASLR-stable `module+0xOFF` likhta hai.
+2. **`parallax_dump`** — host/native static analysis CLI. APK/ZIP, DEX, ELF aur assets scan karta hai, runtime dump merge karta hai, aur JSON/CSV/HTML report banata hai.
+
+## Native analysis suite (`parallax_dump`)
+
+### Build aur test
+
+```sh
+cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-host -j4
+ctest --test-dir build-host --output-on-failure
+```
+
+### Usage
+
+```sh
+./build-host/parallax_dump target.apk \
+  -o report --stem target \
+  --extract \
+  --runtime /sdcard/UrlDump/urls_12345.txt
+```
+
+Supported inputs: `.apk`/`.zip`, standalone `.dex`, standalone ELF (`.so`/executable), ya koi bhi raw file. CLI options:
+
+| Option | Matlab |
+| --- | --- |
+| `-o, --out DIR` | report directory (default `parallax-report`) |
+| `--stem NAME` | output basename |
+| `--extract` | APK entries ko `<out>/extracted` me path-traversal-safe extract karta hai |
+| `--runtime FILE` | `liburldump` ki `urls_*.txt/.csv/.jsonl` merge karta hai (repeatable) |
+| `--no-xrefs` | code-reference analysis skip |
+| `--min-len`, `--max-len` | URL length bounds |
+| `--no-utf16`, `--no-utf32`, `--no-escaped` | encoding scanners band karein |
+| `-v, --verbose` | saare findings print karein |
+
+Outputs: `<stem>.json`, `<stem>.csv`, `<stem>.html`.
+
+### Modules
+
+| Module | Kaam |
+| --- | --- |
+| ZIP/APK reader | Built-in ZIP64 + zlib inflate; optional minizip-ng backend |
+| DEX reader | Bounds-checked `string_ids` + MUTF-8; source offset har string ka |
+| ELF reader | Built-in ELF32/ELF64, sections/segments/symbols; optional LIEF backend |
+| URL engine | ASCII, UTF-16LE/BE, UTF-32LE/BE, escaped URLs; exact byte offsets |
+| Address calculator | `file offset`, `VA`, `RVA`, `module offset`, `runtime address` alag-alag fields |
+| Xref engine | Raw pointer scan + Capstone instruction-level references (ARM/ARM64/x86/x86-64) |
+| Runtime merge | `liburldump` outputs ko same finding schema me convert karta hai |
+| Reports | JSON, CSV aur dark HTML table with evidence columns |
+
+### Address vocabulary
+
+| Field | Meaning |
+| --- | --- |
+| `entry_offset` | unpacked APK entry / scanned buffer ke andar byte offset |
+| `file_offset` | standalone file me byte offset; APK entries ke liye `entry_offset` ke barabar |
+| `va` | ELF virtual address (PT_LOAD se derived) |
+| `rva` | `va - image_base`; image base = lowest PT_LOAD `vaddr` |
+| `module_offset` | `addr - load_bias`, yani ASLR-stable `lib.so+0xOFF` value |
+| `runtime_addr` | `module_base + module_offset`; sirf runtime observations me available |
+
+Ek hi URL alag-alag encodings me mil sakti hai; report usse alag finding ke taur par rakhta hai kyunki uska source offset alag hota hai. Static scanning guarantee nahi deta — URLs encrypted, generated, assembled ya remotely fetched ho sakti hain.
+
+### Optional backends
+
+CMake switches:
+
+| Switch | Effect |
+| --- | --- |
+| `PARALLAX_WITH_CAPSTONE=ON` | Capstone milne par ARM/ARM64/x86 xref evidence (default ON) |
+| `PARALLAX_WITH_MINIZIP_NG=ON` | minizip-ng ZIP backend, warna built-in ZIP64 |
+| `PARALLAX_WITH_LIEF=ON` | LIEF ELF backend, warna built-in ELF parser |
+| `PARALLAX_WITH_NLOHMANN_JSON=ON` | nlohmann/json writer, warna built-in JSON writer |
+| `PARALLAX_BUILD_TOOLS=OFF` | sirf static library banana |
+| `PARALLAX_BUILD_TESTS=OFF` | tests skip karein |
+
+Missing optional dependencies build ko nahi todte; CLI report me actual `zip_backend`, `elf_backend` aur `xref_backend` likha jata hai. APK entries untrusted maan kar bounds checks, size caps aur safe extraction use hoti hain.
+
+---
+
+## Runtime dumper (`liburldump.so`)
 
 `liburldump.so` load hote hi ek detached native thread shuru hota hai jo har `interval` second par process ki readable memory scan karta hai. Har mile hue URL ke saath ye likhta hai:
 
@@ -28,7 +112,7 @@ Aur offset-first file (`urls_<pid>_offsets.txt`):
 libUE4.so+0x4418  0x7a1b2c003418  https://api.example.com/v1/config?x=1  [UTF16LE f_off=0x1a418]
 ```
 
-## Kya karta hai
+### Runtime scanner kya karta hai
 
 - `/proc/self/maps` se readable mappings + unka `pgoff`, perms aur path parse karta hai.
 - `/proc/self/mem` se chunked `pread` (1 MB chunks + 1 KB read-ahead overlap) — bade regions bhi safe.
@@ -42,7 +126,7 @@ libUE4.so+0x4418  0x7a1b2c003418  https://api.example.com/v1/config?x=1  [UTF16L
 
 **Kya nahi karta:** koi function hook nahi, cURL/DNS/SSL intercept nahi, URL rewrite/redirect nahi, SSL bypass nahi, network par kuch nahi bhejta.
 
-## Output files
+### Runtime output files
 
 Sabse pehle writable directory (first wins):
 
@@ -65,7 +149,7 @@ Us directory me:
 | `urls_<pid>.jsonl` | Machine-readable JSON (ek object per hit) |
 | `status_<pid>.txt` | Live counters: scans, maps, bytes, URLs, hits, config |
 
-## Runtime config
+### Runtime config
 
 Pehle maujood config file use hota hai (sab keys optional):
 
@@ -80,7 +164,7 @@ Sample: [`config/urldump.conf.example`](config/urldump.conf.example).
 
 Important keys: `interval`, `chunk_bytes`, `overlap_bytes`, `max_region_bytes`, `min_url_len`, `max_url_len`, `max_urls`, `max_hits_per_url`, `scan_utf16`, `scan_utf32`, `scan_escaped`, `out_dir`. Env `URLDUMP_INTERVAL` bhi interval override karta hai.
 
-## Optional control API (C / dlsym)
+### Optional control API (C / dlsym)
 
 Java required nahi — agar host native code hai to `dlsym` se ye functions call kar sakte ho:
 
@@ -92,9 +176,9 @@ size_t urldump_status(char *buf, size_t cap);  // one-line counters
 void  urldump_flush(void);                     // fsync output files
 ```
 
-## “No Java dependency”
+### “No Java dependency”
 
-Is repo se sirf `liburldump.so` banta hai. Koi Java class, JNI call ya Java reference nahi. Constructor se apne aap chal jata hai. Target app me load karne ka tareeqa aapka hai:
+Runtime library me koi Java class, JNI call ya Java reference nahi. Constructor se apne aap chal jata hai. Target app me load karne ka tareeqa aapka hai:
 
 - APK ke `lib/<abi>/` me `liburldump.so` rakho aur app ke existing native loader se load karo.
 - Ya host app me `System.loadLibrary("urldump")` (host code, is library ka dependency nahi).
@@ -102,16 +186,24 @@ Is repo se sirf `liburldump.so` banta hai. Koi Java class, JNI call ya Java refe
 
 ## Build
 
-Local / Termux:
+Host suite (static analyzer + tests + CLI):
+
+```sh
+cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-host -j4
+ctest --test-dir build-host --output-on-failure
+```
+
+Android runtime library — local / Termux:
 
 ```sh
 export ANDROID_NDK_HOME=/path/to/android-ndk
 ./build.sh
 ```
 
-GitHub Actions: `main`/`master` par push ya PR par automatically 4 ABIs build hote hain aur `liburldump-all.zip` artifact upload hota hai. `v*` tag par ZIP GitHub Release se attach hota hai.
+GitHub Actions: `main`/`master` par push ya PR par **do jobs** chalte hain — host C++ suite (CMake + ctest) aur Android NDK build (4 ABIs). `liburldump-all.zip` artifact upload hota hai; `v*` tag par ZIP GitHub Release se attach hota hai.
 
-Supported ABIs: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`.
+Supported Android ABIs: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`.
 
 ## GameGuardian ke saath
 
