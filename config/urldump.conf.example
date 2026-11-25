@@ -1,0 +1,29 @@
+# ParallaxUrlDumpNative ULTRA - runtime config example
+# Copy to /sdcard/UrlDump/urldump.conf (or set $URLDUMP_CONF) and edit.
+# Unknown keys are ignored. Values are case-insensitive for booleans.
+
+# Seconds between full memory scans (minimum 1)
+interval=2
+
+# Read chunk size and overlap used to catch strings across chunk boundaries
+chunk_bytes=1048576
+overlap_bytes=1024
+
+# Upper limit per /proc/self/maps region (bytes)
+max_region_bytes=67108864
+
+# URL length bounds
+min_url_len=8
+max_url_len=512
+
+# Memory bounds: unique URLs and distinct addresses stored per URL
+max_urls=20000
+max_hits_per_url=64
+
+# Encodings (1/true/yes or 0/false/no)
+scan_utf16=1
+scan_utf32=1
+scan_escaped=1
+
+# Optional output directory override (empty = auto-detect)
+# out_dir=/sdcard/UrlDump
