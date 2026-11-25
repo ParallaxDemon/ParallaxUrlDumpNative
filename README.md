@@ -51,6 +51,26 @@ Supported ABIs: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`.
 
 Ye **passive** scanner hai — jo URL us waqt memory me maujood hote hain woh pakde jate hain. Agar koi string ban kar turant use ho kar free ho jaye aur scan ke doran memory me na ho, to woh miss ho sakti hai. Isliye scan har 2 second par repeat hota hai.
 
+## GameGuardian Lua dump (BGMI / PUBG KR Global / BGMI Air)
+
+`gg/BGMI_SDKOffsets_Dump.lua` ek **read-only** GG script hai. GameGuardian me target game select karke ye script chalao; output ek `.txt` me milta hai:
+
+- Target info (package, versionCode, versionName), GG version, Android SDK int
+- Device info from `/system/build.prop`, `/proc/cpuinfo`, `/proc/meminfo`
+- `libUE4.so` + `libanogs.so` ke saare mappings, base addresses, relative offsets, ELF magic
+- Saare loaded `.so` libraries ke base + size
+- Game API/endpoints: dumped memory aur `UrlDump/*.txt` se mile URLs (ASCII + UTF-16LE)
+
+Script package-agnostic hai — `com.tencent.ig` (Global), `com.pubg.krmobile` (KR), `com.pubg.imobile` (BGMI/Air) ya koi bhi selected target par chal jata hai.
+
+Output path:
+
+```text
+<EXT_STORAGE>/GG_Dump/<package>_dump_<timestamp>.txt
+```
+
+Agar aapne `liburldump.so` bhi load kiya hua hai to uski `UrlDump/*.txt` file bhi isi report me include ho jati hai.
+
 ## Legal / ethical use
 
 Sirf apne apps ya explicitly authorized test apps par use karein. Ye project sirf local file me URLs likhta hai; na traffic redirect karta hai, na data bahar bhejta hai.
