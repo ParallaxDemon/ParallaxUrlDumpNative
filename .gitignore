@@ -1,0 +1,9 @@
+# ndk-build outputs
+app/src/main/obj/
+app/src/main/libs/
+artifacts/
+*.zip
+
+# Editor / OS
+.DS_Store
+*.swp

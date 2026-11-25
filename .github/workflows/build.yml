@@ -1,0 +1,53 @@
+name: build liburldump.so
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Android NDK r25c
+        run: |
+          curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q ndk.zip
+          echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-r25c" >> "$GITHUB_ENV"
+
+      - name: Build all ABIs
+        run: |
+          "$ANDROID_NDK_HOME/ndk-build" -C app/src/main/jni
+          file app/src/main/libs/*/liburldump.so
+
+      - name: Package
+        run: |
+          mkdir -p artifacts
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            mkdir -p "artifacts/$abi"
+            cp "app/src/main/libs/$abi/liburldump.so" "artifacts/$abi/"
+          done
+          (cd artifacts && zip -r ../liburldump-all.zip .)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: liburldump-all
+          path: |
+            liburldump-all.zip
+            artifacts/**
+
+      - name: Attach ZIP to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: liburldump-all.zip
