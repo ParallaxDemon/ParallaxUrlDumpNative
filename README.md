@@ -1,80 +1,58 @@
 # ParallaxUrlDumpNative
 
-**Pure-native Android URL recorder — `liburldump.so` only. No Java code, no Java classes, no JNI calls.**
+**Pure-native, passive URL dumper for Android. Sirf `.txt` — no hooks, no interception, no traffic modification, no Java dependency.**
 
-Inspired by the hooking pipeline in [`ParallaxUrlStrenthChecking`](https://github.com/ParallaxDemon/ParallaxUrlStrenthChecking), but redesigned for one job: **record every URL the process touches into a plain `.txt` file on the device.**
+`liburldump.so` load hote hi ek detached native thread shuru hota hai jo har 2 second par process ki readable memory scan karta hai aur jo bhi URL-looking strings milte hain unhe dedupe karke ek plain text file me append karta hai.
 
----
+## Kya karta hai
 
-## What it captures
+- `/proc/self/maps` se readable mappings nikalta hai.
+- `/proc/self/mem` se un mappings ka content padhta hai (direct pointer access nahi, isliye crash kam).
+- Har mapping me `https://`, `http://`, `wss://`, `ws://` prefixes dhoondta hai.
+- **ASCII/UTF-8 aur UTF-16LE dono** scan karta hai — isliye Java/Kotlin strings, native hardcoded endpoints, cached responses aur JSON bodies pakde jate hain.
+- Har unique URL ko line-by-line likh deta hai.
 
-| Layer | Hook | Captures |
-|---|---|---|
-| cURL API | `curl_easy_setopt(CURLOPT_URL)`, `curl_url_set` | Exact URLs passed to libcurl |
-| DNS libc | `getaddrinfo`, `gethostbyname` | Hostnames even when no cURL is used |
-| TLS | `SSL_write` | Plaintext HTTPS request line + `Host` header + URLs inside bodies |
-| Plain sockets | `send`, `sendto` | Plaintext HTTP request line + `Host` header + URLs inside bodies |
-| Late loads | `dlopen` + `/proc/self/maps` watcher | Libraries loaded after the `.so` starts |
-
-Every captured URL is deduplicated and appended as one line per URL.
+**Kya nahi karta:** koi function hook nahi, cURL/DNS/SSL intercept nahi, URL rewrite/redirect nahi, SSL bypass nahi, network par kuch nahi bhejta.
 
 ## Output file
 
-The first writable path wins (no storage permission needed for the first one):
+Pehle writable path wins:
 
 1. `/storage/emulated/0/Android/data/<package>/files/UrlDump/urls_<pid>.txt`
 2. `/storage/emulated/0/Download/UrlDump/urls_<package>_<pid>.txt`
 3. `/data/data/<package>/files/urls_<pid>.txt`
 
-The package name and PID are read natively from `/proc/self/cmdline` and `getpid()` — no Android API calls.
+Package name aur PID natively `/proc/self/cmdline` + `getpid()` se aate hain. Koi Android API ya storage permission required nahi (pehla path app-specific hota hai).
 
-Example line:
+## “No Java dependency”
 
-```text
-https://api.example.com/v1/session?token=...
-```
+Is repo se sirf `liburldump.so` banta hai. Isme koi Java class, JNI call ya Java reference nahi hai. Constructor se apne aap chal jata hai.
 
-## “No Java dependency” — what that means
+Target app me load karne ka tareeqa aapka hai:
 
-This repository builds **only a shared object**. The library does not contain, reference, or require any Java class. It is self-starting via `__attribute__((constructor))` the moment the dynamic linker loads it.
+- APK ke `lib/<abi>/` me `liburldump.so` rakho aur app ke existing native loader se load karo.
+- Ya host app me ek `System.loadLibrary("urldump")` call (ye host code hai, is library ka dependency nahi).
+- Ya rooted device par `LD_PRELOAD`.
 
-To make a target app load it, you still need one of these host-side loading methods (choose whichever you already use):
+## Build
 
-- Add `liburldump.so` to the APK's `lib/<abi>/` and let your existing native loader load it.
-- One `System.loadLibrary("urldump")` call in the host app (this is host code, not a dependency of this project).
-- `LD_PRELOAD` on a rooted device.
-
-Nothing in `liburldump.so` calls into Java, and it never modifies or redirects traffic.
-
-## Build locally
+Local:
 
 ```sh
 export ANDROID_NDK_HOME=/path/to/android-ndk
 ./build.sh
 ```
 
-Outputs:
+GitHub Actions: `main`/`master` par push ya PR par automatically 4 ABIs build hote hain aur `liburldump-all.zip` artifact upload hota hai. `v*` tag par ZIP GitHub Release se attach hota hai.
 
-```text
-app/src/main/libs/arm64-v8a/liburldump.so
-app/src/main/libs/armeabi-v7a/liburldump.so
-app/src/main/libs/x86/liburldump.so
-app/src/main/libs/x86_64/liburldump.so
-```
+Supported ABIs: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`.
 
-## Build with GitHub Actions
+## Limit
 
-Push to `main`/`master`, or open a pull request — the workflow downloads Android NDK r25c, builds all four ABIs, and uploads `liburldump-all.zip` as an artifact.
-
-Tag a release (`v1.0`, `v1.1`, ...) and the same ZIP is attached to the GitHub Release automatically.
+Ye **passive** scanner hai — jo URL us waqt memory me maujood hote hain woh pakde jate hain. Agar koi string ban kar turant use ho kar free ho jaye aur scan ke doran memory me na ho, to woh miss ho sakti hai. Isliye scan har 2 second par repeat hota hai.
 
 ## Legal / ethical use
 
-Use this **only** on apps you own or are explicitly authorized to test. This project only writes URLs to local storage; it does not bypass SSL, redirect traffic, exfiltrate data, or hide itself.
+Sirf apne apps ya explicitly authorized test apps par use karein. Ye project sirf local file me URLs likhta hai; na traffic redirect karta hai, na data bahar bhejta hai.
 
-## Credits
-
-- [Dobby](https://github.com/jmpews/Dobby) inline-hook engine (prebuilt static libraries included per ABI).
-- Hook architecture inspired by [ParallaxUrlStrenthChecking](https://github.com/ParallaxDemon/ParallaxUrlStrenthChecking).
-
-Maintained by **ParallaxDemon**.
+Maintained by **ParallaxDemon**. License: MIT.
