@@ -35,6 +35,8 @@ Supported inputs: `.apk`/`.zip`, standalone `.dex`, standalone ELF (`.so`/execut
 | `--extract` | APK entries ko `<out>/extracted` me path-traversal-safe extract karta hai |
 | `--runtime FILE` | `liburldump` ki `urls_*.txt/.csv/.jsonl` merge karta hai (repeatable) |
 | `--no-xrefs` | code-reference analysis skip |
+| `--no-xor` | single-byte XOR scanner band karein |
+| `--no-code-built` | AArch64 code-immediate string reconstruction band karein |
 | `--min-len`, `--max-len` | URL length bounds |
 | `--no-utf16`, `--no-utf32`, `--no-escaped` | encoding scanners band karein |
 | `-v, --verbose` | saare findings print karein |
@@ -48,7 +50,8 @@ Outputs: `<stem>.json`, `<stem>.csv`, `<stem>.html`.
 | ZIP/APK reader | Built-in ZIP64 + zlib inflate; optional minizip-ng backend |
 | DEX reader | Bounds-checked `string_ids` + MUTF-8; source offset har string ka |
 | ELF reader | Built-in ELF32/ELF64, sections/segments/symbols; optional LIEF backend |
-| URL engine | ASCII, UTF-16LE/BE, UTF-32LE/BE, escaped URLs; exact byte offsets |
+| URL engine | ASCII, UTF-16LE/BE, UTF-32LE/BE, escaped URLs, single-byte XOR; exact byte offsets |
+| Code reconstruction | AArch64 `adrp`/`add`/`mov`/`movk`/`ldr`/`str`/`stp` se bana string + XOR decode (Capstone) |
 | Address calculator | `file offset`, `VA`, `RVA`, `module offset`, `runtime address` alag-alag fields |
 | Xref engine | Raw pointer scan + Capstone instruction-level references (ARM/ARM64/x86/x86-64) |
 | Runtime merge | `liburldump` outputs ko same finding schema me convert karta hai |
@@ -66,6 +69,23 @@ Outputs: `<stem>.json`, `<stem>.csv`, `<stem>.html`.
 | `runtime_addr` | `module_base + module_offset`; sirf runtime observations me available |
 
 Ek hi URL alag-alag encodings me mil sakti hai; report usse alag finding ke taur par rakhta hai kyunki uska source offset alag hota hai. Static scanning guarantee nahi deta — URLs encrypted, generated, assembled ya remotely fetched ho sakti hain.
+
+### XOR / code-built URL recovery
+
+Kuch libraries poora URL `.rodata` me nahi rakhti: ek XOR'd blob hota hai aur baaki hissa code immediates se buffer me likha jata hai, phir decode karke curl ko diya jata hai. Do passes isse handle karti hain:
+
+1. **Single-byte XOR** — har byte ko anchor karke key derive ki jati hai (`h`/`w` ke sath XOR). Report me `encoding=XOR8:2E`, `xor_key=46` aur `note` milta hai.
+2. **Code reconstruction** (Capstone + AArch64) — `adrp`/`add`/`mov`/`movk`/`ldr`/`str`/`stp` ko follow karke buffer rebuild hota hai, phir 255 keys try karke poora URL nikalta hai. `encoding=XOR8:2E+CODE`, `note` me build instruction ka address hota hai. Agar same blob ka generic XOR hit mile to use supersede kar diya jata hai (sirf truncated prefix hota hai).
+
+JSON/CSV/HTML me har finding ke saath `xor_key` aur `note` columns hain; HTML me detail column aur meta me `code:` backend dikhta hai.
+
+Example (`libDARK.so`, installed `com.pubg.imobile`):
+
+```sh
+./build-host/parallax_dump /data/app/.../lib/arm64/libDARK.so -o report --stem libDARK -v
+```
+
+Recovered evidence: blob `libDARK.so+0x305e40` XOR `0x2E`, suffix `serv` + `er` code immediates se (`0xd8758`–`0xd8788`), decode `0xd8050`, `curl_easy_setopt(CURLOPT_URL, url)` `0xd8168`. Final URL `https://taito.../server` report me `encoding=XOR8:2E+CODE`, `xor_key=46`, `file_offset=0x305e40`, `va=0x305e40` ke sath milta hai.
 
 ### Optional backends
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "parallax/common.hpp"
+#include "parallax/obfuscation.hpp"
 #include "parallax/url.hpp"
 
 #include <vector>
@@ -10,6 +11,8 @@ namespace parallax {
 struct AnalyzeOptions {
     UrlScanOptions url;
     bool xrefs = true;
+    bool code_built = true;
+    CodeBuiltOptions code_built_options;
     bool extract_entries = false;
     std::string extract_dir;
     std::vector<std::string> runtime_files;

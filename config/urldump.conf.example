@@ -25,5 +25,14 @@ scan_utf16=1
 scan_utf32=1
 scan_escaped=1
 
+# Note: single-byte XOR aur AArch64 code-immediate reconstruction static
+# analyzer (parallax_dump) ke features hain, runtime dumper ke nahi.
+# Unhe band karne ke liye CLI flags use karein:
+#   parallax_dump target.so --no-xor --no-code-built
+# Static reports me in encoding values se XOR evidence milta hai:
+#   XOR8:2E        (single-byte XOR blob)
+#   XOR8:2E+CODE   (code immediates se rebuild hua poora URL)
+# Har XOR finding ke saath xor_key aur note fields bhi hote hain.
+
 # Optional output directory override (empty = auto-detect)
 # out_dir=/sdcard/UrlDump

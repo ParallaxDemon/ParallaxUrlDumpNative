@@ -10,6 +10,7 @@ struct ReportOptions {
     std::string zip_backend;
     std::string backend;  // ELF backend, kept for compatibility
     std::string xref_backend;
+    std::string code_backend;  // code-built / XOR reconstruction backend
 };
 
 std::string to_json(const std::vector<Finding> &findings, const ReportOptions &options = {});

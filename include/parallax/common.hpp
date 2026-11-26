@@ -27,8 +27,10 @@ struct Finding {
     std::string source_path;        // APK entry, module, section or file path
     uint64_t entry_offset = 0;      // offset inside the scanned entry/buffer
     uint64_t file_offset = 0;       // offset inside the container file (if known)
-    std::string encoding;           // ASCII, UTF16LE, UTF32BE, ESCAPED, ...
+    std::string encoding;           // ASCII, UTF16LE, UTF32BE, ESCAPED, XOR8:2E, ...
     double confidence = 0.5;        // 0..1 heuristic, not a guarantee
+    uint8_t xor_key = 0;            // single-byte XOR key; 0 = no XOR transform
+    std::string note;               // reconstruction / decoding evidence
     uint64_t va = 0;                // ELF virtual address (when mapped)
     uint64_t rva = 0;               // va - image base
     uint64_t runtime_addr = 0;      // module_base + module_offset (runtime only)

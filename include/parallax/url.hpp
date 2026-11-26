@@ -10,6 +10,7 @@ struct UrlScanOptions {
     bool scan_utf16 = true;
     bool scan_utf32 = true;
     bool scan_escaped = true;
+    bool scan_xor = true;      // single-byte XOR obfuscation (e.g. XOR 0x2e)
 };
 
 std::string normalize_url(std::string raw);
@@ -26,6 +27,10 @@ public:
                               uint64_t file_base = 0) const;
 
 private:
+    std::vector<Finding> scan_xor(const uint8_t *data, size_t len, uint64_t base_offset,
+                                  SourceKind kind, const std::string &source_path,
+                                  uint64_t file_base) const;
+
     UrlScanOptions options_;
 };
 

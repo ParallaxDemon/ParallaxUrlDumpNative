@@ -23,6 +23,7 @@ set(PARALLAX_SOURCES
     src/dex.cpp
     src/address.cpp
     src/xref.cpp
+    src/obfuscation.cpp
     src/report.cpp
     src/runtime.cpp
     src/analyzer.cpp)

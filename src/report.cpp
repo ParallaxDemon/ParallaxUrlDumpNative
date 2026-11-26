@@ -83,6 +83,7 @@ std::string to_json(const std::vector<Finding> &findings, const ReportOptions &o
     root["zip_backend"] = options.zip_backend;
     root["elf_backend"] = options.backend;
     root["xref_backend"] = options.xref_backend;
+    root["code_backend"] = options.code_backend;
     root["count"] = findings.size();
     root["findings"] = nlohmann::json::array();
     for (const Finding &f : findings) {
@@ -94,6 +95,8 @@ std::string to_json(const std::vector<Finding> &findings, const ReportOptions &o
         j["file_offset"] = f.file_offset;
         j["encoding"] = f.encoding;
         j["confidence"] = f.confidence;
+        j["xor_key"] = f.xor_key;
+        j["note"] = f.note;
         j["va"] = f.va;
         j["rva"] = f.rva;
         j["module_offset"] = f.module_offset;
@@ -109,6 +112,7 @@ std::string to_json(const std::vector<Finding> &findings, const ReportOptions &o
                       "  \"zip_backend\": \"" + escape_json(options.zip_backend) + "\",\n" +
                       "  \"elf_backend\": \"" + escape_json(options.backend) + "\",\n" +
                       "  \"xref_backend\": \"" + escape_json(options.xref_backend) + "\",\n" +
+                      "  \"code_backend\": \"" + escape_json(options.code_backend) + "\",\n" +
                       "  \"count\": " + std::to_string(findings.size()) + ",\n" +
                       "  \"findings\": [\n";
     for (size_t i = 0; i < findings.size(); ++i) {
@@ -120,6 +124,8 @@ std::string to_json(const std::vector<Finding> &findings, const ReportOptions &o
                "\",\"entry_offset\":" + std::to_string(f.entry_offset) +
                ",\"file_offset\":" + std::to_string(f.file_offset) +
                ",\"encoding\":\"" + f.encoding + "\",\"confidence\":" + conf +
+               ",\"xor_key\":" + std::to_string(f.xor_key) +
+               ",\"note\":\"" + escape_json(f.note) + "\"" +
                ",\"va\":" + std::to_string(f.va) +
                ",\"rva\":" + std::to_string(f.rva) +
                ",\"module_offset\":" + std::to_string(f.module_offset) +
@@ -141,7 +147,7 @@ std::string to_json(const std::vector<Finding> &findings, const ReportOptions &o
 std::string to_csv(const std::vector<Finding> &findings) {
     std::string out =
         "url,source,source_path,entry_offset,file_offset,encoding,confidence,"
-        "va,rva,module_offset,runtime_addr,module,xrefs\n";
+        "xor_key,note,va,rva,module_offset,runtime_addr,module,xrefs\n";
     for (const Finding &f : findings) {
         char conf[32];
         std::snprintf(conf, sizeof(conf), "%.3f", f.confidence);
@@ -150,6 +156,7 @@ std::string to_csv(const std::vector<Finding> &findings) {
         out += csv_cell(f.url) + "," + to_string(f.source) + "," +
                csv_cell(f.source_path) + "," + std::to_string(f.entry_offset) + "," +
                std::to_string(f.file_offset) + "," + csv_cell(f.encoding) + "," + conf +
+               "," + std::to_string(f.xor_key) + "," + csv_cell(f.note) +
                "," + std::to_string(f.va) + "," + std::to_string(f.rva) + "," +
                std::to_string(f.module_offset) + "," + std::to_string(f.runtime_addr) + "," +
                csv_cell(f.module) + "," +
@@ -173,8 +180,9 @@ std::string to_html(const std::vector<Finding> &findings, const ReportOptions &o
         " &middot; zip: " + escape_html(options.zip_backend) +
         " &middot; elf: " + escape_html(options.backend) +
         " &middot; xrefs: " + escape_html(options.xref_backend) +
+        " &middot; code: " + escape_html(options.code_backend) +
         "</div><table><thead><tr><th>URL</th><th>source</th><th>offset</th><th>VA/RVA</th>"
-        "<th>module+offset</th><th>runtime</th><th>enc</th><th>conf</th><th>xrefs</th>"
+        "<th>module+offset</th><th>runtime</th><th>enc</th><th>conf</th><th>detail</th><th>xrefs</th>"
         "</tr></thead><tbody>";
     for (const Finding &f : findings) {
         char conf[32];
@@ -183,7 +191,9 @@ std::string to_html(const std::vector<Finding> &findings, const ReportOptions &o
                escape_html(std::string(to_string(f.source)) + ":" + f.source_path) +
                "</td><td>" + hex(f.file_offset) + "</td><td>" + hex(f.va) + " / " +
                hex(f.rva) + "</td><td>" + hex(f.module_offset) + "</td><td>" +
-               hex(f.runtime_addr) + "</td><td>" + f.encoding + "</td><td>" + conf +
+               hex(f.runtime_addr) + "</td><td>" + escape_html(f.encoding) +
+               (f.xor_key ? " (key " + hex(f.xor_key) + ")" : "") +
+               "</td><td>" + conf + "</td><td>" + escape_html(f.note) +
                "</td><td>";
         for (const std::string &x : f.xrefs) out += escape_html(x) + "<br>";
         out += "</td></tr>";

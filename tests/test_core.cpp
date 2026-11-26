@@ -2,6 +2,7 @@
 #include "parallax/common.hpp"
 #include "parallax/dex.hpp"
 #include "parallax/elf.hpp"
+#include "parallax/obfuscation.hpp"
 #include "parallax/report.hpp"
 #include "parallax/url.hpp"
 
@@ -39,8 +40,13 @@ public:
         if (a >= 0x20000 && a < 0x20100) { off = 0x1000 + (a - 0x20000); return true; }
         return false;
     }
-    std::vector<uint8_t> section_data(const parallax::ElfSection &) const override { return {}; }
+    std::vector<uint8_t> section_data(const parallax::ElfSection &s) const override {
+        return s.name == ".text" ? code_ : std::vector<uint8_t>();
+    }
     std::string backend() const override { return "fake"; }
+
+    void add_section(const parallax::ElfSection &s) { sections_.push_back(s); }
+    void set_code(std::vector<uint8_t> code) { code_ = code; }
 
     FakeElf() {
         parallax::ElfSegment s;
@@ -53,6 +59,7 @@ private:
     std::vector<parallax::ElfSection> sections_;
     std::vector<parallax::ElfSegment> segments_;
     std::vector<parallax::ElfSymbol> symbols_;
+    std::vector<uint8_t> code_;
 };
 
 }  // namespace
@@ -116,9 +123,79 @@ int main(int argc, char **argv) {
         check(be32, "UTF-32BE URL with byte-exact offset");
     }
 
+    // AArch64 code-immediate reconstruction: prefix from a data blob, suffix
+    // from mov/movk immediates. Gated on the Capstone backend being present.
+    {
+        bool ok = false;
+        if (parallax::code_built_backend() != "unavailable") {
+            static const uint8_t code[] = {
+                0x08,0x01,0x00,0x90, 0x00,0x01,0xc0,0x3d,
+                0x81,0x01,0x00,0x90, 0x21,0x00,0x00,0x91,
+                0x20,0x00,0x80,0x3d, 0xaa,0x6b,0x89,0x52,
+                0x8a,0x0b,0xab,0x72, 0x2a,0x10,0x00,0xb9,
+                0x6b,0x89,0x8b,0x52, 0x2b,0x28,0x00,0x79,
+                0xcc,0x05,0x80,0x52, 0x2c,0x58,0x00,0x39,
+                0xc0,0x03,0x5f,0xd6
+            };
+            FakeElf elf;
+            elf.set_code(std::vector<uint8_t>(code, code + sizeof(code)));
+            parallax::ElfSection text;
+            text.name = ".text"; text.type = 1; text.flags = 6;
+            text.addr = 0; text.offset = 0; text.size = sizeof(code);
+            elf.add_section(text);
+
+            std::vector<uint8_t> image(0x1010, 0);
+            const std::string prefix = "https://x.co/abc";
+            for (size_t i = 0; i < prefix.size(); ++i) {
+                image[0x1000 + i] = static_cast<uint8_t>(prefix[i] ^ 0x2E);
+            }
+            auto found = parallax::scan_code_built_strings(
+                elf, image, parallax::UrlScanOptions(), "synthetic.so", 0);
+            for (const auto &f : found) {
+                if (f.url == "https://x.co/abcserver" && f.xor_key == 0x2E &&
+                    f.encoding == "XOR8:2E+CODE" && f.entry_offset == 0x1000) {
+                    ok = true;
+                    break;
+                }
+            }
+        } else {
+            ok = true;  // documented no-op when Capstone is unavailable
+        }
+        check(ok, "AArch64 code-immediate URL reconstruction (Capstone-gated)");
+    }
+
     check(parallax::normalize_url("https:\\/\\/a.example\\/b&amp;c=1.") ==
               "https://a.example/b&c=1",
           "URL normalization (slashes, entities, trailing dot)");
+
+    // Single-byte XOR obfuscation: exact offset, recovered key, decode note.
+    {
+        const std::string plain = "https://xor.example.net/v1/key";
+        const uint8_t key = 0x2E;
+        std::vector<uint8_t> buf(7, 0x41);
+        size_t xor_offset = buf.size();
+        for (char c : plain) buf.push_back(static_cast<uint8_t>(c) ^ key);
+
+        auto found = parallax::UrlScanner().scan(buf.data(), buf.size(), 0,
+            parallax::SourceKind::RawFile, "test");
+        bool ok = false;
+        for (const auto &f : found) {
+            if (f.url == plain && f.entry_offset == xor_offset &&
+                f.encoding == "XOR8:2E" && f.xor_key == key && !f.note.empty()) {
+                ok = true;
+                break;
+            }
+        }
+        check(ok, "single-byte XOR URL with byte-exact offset, key and note");
+
+        parallax::UrlScanOptions no_xor;
+        no_xor.scan_xor = false;
+        auto plain_only = parallax::UrlScanner(no_xor).scan(buf.data(), buf.size(), 0,
+            parallax::SourceKind::RawFile, "test");
+        bool disabled = true;
+        for (const auto &f : plain_only) if (f.xor_key != 0) disabled = false;
+        check(disabled, "scan_xor=false disables XOR decoding");
+    }
 
     // Synthetic DEX with one string.
     {
@@ -164,16 +241,31 @@ int main(int argc, char **argv) {
         f.url = "https://report.example/a?b=1";
         f.file_offset = 0x1234;
         f.confidence = 0.91;
+        f.xor_key = 0x2E;
+        f.note = "rebuilt from code immediates at 0xd8758";
         std::vector<parallax::Finding> findings{f};
         std::string json = parallax::to_json(findings);
         std::string csv = parallax::to_csv(findings);
-        std::string html = parallax::to_html(findings);
+        parallax::ReportOptions report;
+        report.code_backend = "capstone-arm64-immediate-reconstruction";
+        std::string html = parallax::to_html(findings, report);
+        std::string json_with_backend = parallax::to_json(findings, report);
         check(json.find(f.url) != std::string::npos && json.find("\"file_offset\":4660") != std::string::npos,
               "JSON report fields");
         check(csv.find("file_offset") != std::string::npos && csv.find(f.url) != std::string::npos,
               "CSV report fields");
         check(html.find("<table>") != std::string::npos && html.find(f.url) != std::string::npos,
               "HTML report fields");
+        check(json.find("xor_key") != std::string::npos &&
+                  json.find(f.note) != std::string::npos &&
+                  json_with_backend.find("capstone-arm64-immediate-reconstruction") != std::string::npos,
+              "JSON XOR evidence and code backend");
+        check(csv.find("xor_key,note") != std::string::npos && csv.find(f.note) != std::string::npos,
+              "CSV XOR evidence columns");
+        check(html.find("detail") != std::string::npos &&
+                  html.find(f.note) != std::string::npos &&
+                  html.find("capstone-arm64-immediate-reconstruction") != std::string::npos,
+              "HTML XOR evidence and code backend");
     }
 
     std::printf("%s\n", failures == 0 ? "ALL TESTS PASSED" : "TESTS FAILED");

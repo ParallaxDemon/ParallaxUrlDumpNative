@@ -3,6 +3,7 @@
 #include "parallax/address.hpp"
 #include "parallax/dex.hpp"
 #include "parallax/elf.hpp"
+#include "parallax/obfuscation.hpp"
 #include "parallax/report.hpp"
 #include "parallax/runtime.hpp"
 #include "parallax/zip.hpp"
@@ -61,6 +62,22 @@ void scan_elf(const std::vector<uint8_t> &bytes, const std::string &source_path,
             addresses.annotate(f);  // va + rva; runtime address stays 0 for static files
         }
         merge(local, found);
+    }
+    if (options.code_built) {
+        std::vector<Finding> rebuilt = scan_code_built_strings(
+            *elf, bytes, options.url, source_path, file_base, options.code_built_options);
+        for (Finding &f : rebuilt) {
+            f.module = source_path;
+            addresses.annotate(f);
+        }
+        // A generic XOR hit on the same blob is only a truncated prefix; the
+        // string rebuilt from code immediates is the complete one.
+        for (const Finding &r : rebuilt) {
+            local.erase(std::remove_if(local.begin(), local.end(), [&](const Finding &f) {
+                return f.xor_key != 0 && f.entry_offset == r.entry_offset;
+            }), local.end());
+        }
+        merge(local, rebuilt);
     }
     if (options.xrefs && !local.empty()) {
         XrefEngine xrefs(*elf);

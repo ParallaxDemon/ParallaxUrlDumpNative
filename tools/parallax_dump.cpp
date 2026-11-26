@@ -20,6 +20,8 @@ void usage(const char *prog) {
         "  -o, --out DIR        report directory (default: parallax-report)\n"
         "      --stem NAME      report file basename (default: target name)\n"
         "      --no-xrefs       skip code-reference analysis\n"
+        "      --no-xor         skip single-byte XOR URL scanning\n"
+        "      --no-code-built  skip AArch64 code-immediate string reconstruction\n"
         "      --extract        safely extract APK entries into <out>/extracted\n"
         "      --runtime FILE   merge a liburldump urls_*.txt/.csv/.jsonl (repeatable)\n"
         "      --min-len N      minimum URL length (default 8)\n"
@@ -58,6 +60,8 @@ int main(int argc, char **argv) {
         if (a == "-o" || a == "--out") out_dir = next();
         else if (a == "--stem") stem = next();
         else if (a == "--no-xrefs") options.xrefs = false;
+        else if (a == "--no-xor") options.url.scan_xor = false;
+        else if (a == "--no-code-built") options.code_built = false;
         else if (a == "--extract") { options.extract_entries = true; options.extract_dir = out_dir + "/extracted"; }
         else if (a == "--runtime") options.runtime_files.push_back(next());
         else if (a == "--min-len") options.url.min_len = static_cast<size_t>(std::strtoul(next().c_str(), nullptr, 0));
@@ -81,6 +85,7 @@ int main(int argc, char **argv) {
     report.zip_backend = parallax::zip_backend();
     report.backend = parallax::elf_backend();
     report.xref_backend = parallax::xref_backend(options.xrefs);
+    report.code_backend = options.code_built ? parallax::code_built_backend() : "disabled";
     bool ok = parallax::write_reports(findings, out_dir, stem, report);
     if (!ok) std::fprintf(stderr, "warning: could not write all report files to %s\n", out_dir.c_str());
 
@@ -97,6 +102,8 @@ int main(int argc, char **argv) {
                     parallax::hex(f.va).c_str(), parallax::hex(f.rva).c_str(),
                     parallax::hex(f.module_offset).c_str(),
                     parallax::hex(f.runtime_addr).c_str(), f.encoding.c_str(), f.confidence);
+        if (f.xor_key) std::printf("      xor_key=%s\n", parallax::hex(f.xor_key).c_str());
+        if (!f.note.empty()) std::printf("      note: %s\n", f.note.c_str());
         for (const std::string &x : f.xrefs) std::printf("      xref: %s\n", x.c_str());
     }
     return ok ? 0 : 3;

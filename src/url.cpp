@@ -1,6 +1,7 @@
 #include "parallax/url.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <unordered_set>
 
@@ -102,6 +103,39 @@ size_t extract_string(const uint8_t *data, size_t len, size_t cur, int encoding,
         if (!ok || !is_url_char(c, allow_backslash)) break;
         out.push_back(static_cast<char>(c));
         cur += step;
+    }
+    return cur;
+}
+
+std::string xor_encoding_name(uint8_t key) {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "XOR8:%02X", key);
+    return buf;
+}
+
+// A single-byte-XOR blob is often packed immediately before a normal ASCII
+// string. XOR-decoding that following string produces garbage, so stop when
+// the raw bytes start looking like an ordinary printable string (space/colon
+// within the first dozen bytes).
+bool looks_like_plain_text_boundary(const uint8_t *data, size_t len, size_t pos) {
+    size_t printable = 0;
+    for (size_t j = 0; j < 12 && pos + j < len; ++j) {
+        unsigned char c = data[pos + j];
+        if (c < 0x20 || c >= 0x7f) break;
+        ++printable;
+        if (c == ' ' || c == ':') return printable >= 6;
+    }
+    return false;
+}
+
+size_t extract_string_xor(const uint8_t *data, size_t len, size_t cur, uint8_t key,
+                          size_t max_len, std::string &out) {
+    while (cur < len && out.size() < max_len) {
+        if (looks_like_plain_text_boundary(data, len, cur)) break;
+        unsigned char c = static_cast<unsigned char>(data[cur] ^ key);
+        if (c == 0 || !is_url_char(c, false)) break;
+        out.push_back(static_cast<char>(c));
+        ++cur;
     }
     return cur;
 }
@@ -241,6 +275,63 @@ std::vector<Finding> UrlScanner::scan(const uint8_t *data, size_t len, uint64_t 
             if (seen.insert(key).second) results.push_back(f);
         }
         i = pos + 1;
+    }
+    if (options_.scan_xor) {
+        std::vector<Finding> xored = scan_xor(data, len, base_offset, kind, source_path, file_base);
+        results.insert(results.end(), xored.begin(), xored.end());
+    }
+    return results;
+}
+
+std::vector<Finding> UrlScanner::scan_xor(const uint8_t *data, size_t len, uint64_t base_offset,
+                                          SourceKind kind, const std::string &source_path,
+                                          uint64_t file_base) const {
+    std::vector<Finding> results;
+    if (data == nullptr || len < 8) return results;
+
+    // Tail bytes after the scheme's first character. Deriving the key from the
+    // anchor byte lets us test every single-byte key in one linear pass.
+    static const char *const kSchemes[4] = {"https://", "http://", "wss://", "ws://"};
+    static const char *const kTails[4] = {"ttps://", "ttp://", "ss://", "s://"};
+
+    std::unordered_set<std::string> seen;
+    for (size_t i = 0; i + 2 < len; ++i) {
+        unsigned char first = data[i];
+        if (first == 'h' || first == 'w') continue;  // the plain scanner owns these
+        for (size_t s = 0; s < 4; ++s) {
+            uint8_t key = static_cast<uint8_t>(first ^ static_cast<unsigned char>(kSchemes[s][0]));
+            if (key == 0) continue;
+            const char *tail = kTails[s];
+            size_t tn = std::strlen(tail);
+            if (i + 1 + tn > len) continue;
+            bool match = true;
+            for (size_t j = 0; j < tn; ++j) {
+                if (data[i + 1 + j] != static_cast<uint8_t>(tail[j] ^ key)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match) continue;
+
+            std::string raw = kSchemes[s];
+            extract_string_xor(data, len, i + std::strlen(kSchemes[s]), key,
+                               options_.max_len, raw);
+            std::string url = normalize_url(raw);
+            if (!is_probable_url(url, options_)) continue;
+
+            Finding f;
+            f.url = url;
+            f.source = kind;
+            f.source_path = source_path;
+            f.entry_offset = base_offset + i;
+            f.file_offset = file_base + f.entry_offset;
+            f.encoding = xor_encoding_name(key);
+            f.xor_key = key;
+            f.confidence = std::min(0.90, url_confidence(url, f.encoding) + 0.10);
+            f.note = "single-byte XOR " + f.encoding + " decoded at " + hex(f.file_offset);
+            std::string dedup = f.url + "|" + std::to_string(f.entry_offset) + "|" + f.encoding;
+            if (seen.insert(dedup).second) results.push_back(f);
+        }
     }
     return results;
 }
